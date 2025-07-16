@@ -1,6 +1,6 @@
 defaults:
   # presets do not directly configs the pipeline or the algothm. However it provides necessary information to resolve this config
-  - preset_robomimic: lift_image 
+  - preset_robomimic: custom_dataset 
   - _self_
 
 batch_size: 128
@@ -17,24 +17,39 @@ pipeline:
   _target_: srl_il.pipeline.imitation_learning.ImitationLearningPipeline
 
 dataset_cfg:
+  # data:
+  #   _target_: srl_il.dataset.robomimic_dataset.robomimic_train_val_test
+  #   data_path: ${preset_robomimic.data.data_path}
+  #   rgb_processing_keys: ${preset_robomimic.data.rgb_processing_keys}
+  #   preloaded: ${preset_robomimic.data.preloaded} # preload means to keep the data in memory, but some dataset may be too large for this
+  #   test_fraction: 0.1
+  #   val_fraction: 0.1
+  #   window_size_train: 20 
+  #   window_size_test: 20
+  #   keys_traj: ${preset_robomimic.data.keys_traj}
+  #   keys_global: []
+  #   pad_before: false
+  #   pad_after: true
+  #   pad_type: 'near'
+  #   random_seed: ${seed}
+
+
   data:
-    _target_: srl_il.dataset.robomimic_dataset.robomimic_train_val_test
-    data_path: ${preset_robomimic.data.data_path}
-    rgb_processing_keys: ${preset_robomimic.data.rgb_processing_keys}
-    preloaded: ${preset_robomimic.data.preloaded} # preload means to keep the data in memory, but some dataset may be too large for this
-    test_fraction: 0.1
-    val_fraction: 0.1
-    window_size_train: 20 
+    _target_: srl_il.dataset.custom_sequence_dataset.CustomSequenceTrainValTest
+    trajectory_dataset:
+      _target_: your.module.CustomTrajectoryDataset
+      data_path: ${preset_robomimic.data.data_path}
+      keys_traj: ${preset_robomimic.data.keys_traj}
+      preloaded: ${preset_robomimic.data.preloaded}
+      num_worker: ${preset_robomimic.data.num_worker}
+    window_size_train: 20
     window_size_test: 20
-    keys_traj: ${preset_robomimic.data.keys_traj}
-    keys_global: []
-    pad_before: false
-    pad_after: true
-    pad_type: 'near'
-    random_seed: ${seed}
+    keys_traj_cfg: ${preset_robomimic.data.keys_traj}
+    keys_global_cfg: []
+
   batch_size: ${batch_size}
   pin_memory: true
-  num_workers: ${preset_robomimic.data.num_worker} # we don't need a seperate worker if the data is preloaded
+  num_workers: ${preset_rbomimic.data.num_worker} # we don't need a seperate worker if the data is preloaded
 
 
 algo_cfg:

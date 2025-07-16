@@ -1,0 +1,47 @@
+# new_config.yaml (based on your JSON files)
+
+task_tag: gripper_task
+data:
+  data_path: "/home/grimmlins/IL_workspace/data_collection_output"  # Update this to the actual path of your JSON files
+  keys_traj:
+    - ['actions', 'actions', null, null]  # Use actions as the trajectory data
+    - ['gripper_pressure', 'pressure', null, 1]  # Gripper pressure data
+    - ['gripper_distance', 'distance', null, 1]  # Gripper distance data
+    - ['servo_node/delta_twist_cmds', 'twist_cmd', null, null]  # Action for robot's twist command (to control robot's movement)
+  preloaded: true
+  num_worker: 0
+
+target_dims:
+  actions: 6  # or 7, depending on your action dimensions
+
+env:
+  _target_: srl_il.simulators.robomimic.RobomimicEnv
+  env_name: PickPlaceCan
+  env_type: 1
+  obs_name_mapping: []  # No image-based observations
+  env_kwargs:
+    has_renderer: false
+    has_offscreen_renderer: true
+    ignore_done: true
+    use_object_obs: true
+    use_camera_obs: false  # Set to false since you're not using cameras
+    control_freq: 20
+    controller_configs: 
+      type: "OSC_POSE"
+      input_max: 1
+      input_min: -1
+      output_max: [0.05,0.05,0.05,0.5,0.5,0.5]
+      output_min: [-0.05,-0.05,-0.05,-0.5,-0.5,-0.5]
+      kp: 150
+      damping: 1
+      impedance_mode: "fixed"
+      kp_limits: [0,300]
+      damping_limits: [0,10]
+      position_limits: null
+      orientation_limits: null
+      uncouple_pos_ori: true
+      control_delta: false  # Set to false as per your script
+
+train:
+  rollout_horizon: 300
+  num_epochs: 200
