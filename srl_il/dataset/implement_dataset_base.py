@@ -19,7 +19,7 @@ yaml.SafeLoader.add_constructor(
 
 
 class CustomTrajectoryDataset(TrajectoryDataset):
-    def __init__(self, data_path, keys_traj, data_type="train"):
+    def __init__(self, data_path, keys_traj, data_type="train", **kwargs):
         self.data_path = data_path
         self.keys_traj = keys_traj
         self.data_type = data_type

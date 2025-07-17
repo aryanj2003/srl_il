@@ -3,7 +3,8 @@
 
 from srl_il.dataset.robomimic_dataset import RobomimicTrajectorySequenceDataset
 from srl_il.dataset.dataset_base import get_train_val_test_seq_datasets
-from implement_dataset_base import CustomTrajectoryDataset
+from srl_il.dataset.implement_dataset_base import CustomTrajectoryDataset
+
 
 class CustomSequenceDataset(RobomimicTrajectorySequenceDataset):
     def __init__(self, trajectory_dataset, window_size=21, keys_traj_cfg=None,

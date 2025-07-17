@@ -33,19 +33,19 @@ dataset_cfg:
   #   pad_type: 'near'
   #   random_seed: ${seed}
 
+
   data:
     _target_: srl_il.dataset.custom_sequence_dataset.CustomSequenceTrainValTest
 
-    trajectory_dataset:
-      _target_: srl_il.dataset.implement_dataset_base.CustomTrajectoryDataset
-      data_path: "/home/grimmlins/IL_workspace/data_collection_output"
-      keys_traj:
-        - ['actions',                    'actions',            null, null]
-        - ['gripper_pressure',           'pressure',           null,  1  ]
-        - ['gripper_distance',           'distance',           null,  1  ]
-        - ['servo_node_delta_twist_cmds','twist_cmd',          null, null]
-      preloaded: true
-      num_worker: 0
+    # Provide these arguments to CustomSequenceTrainValTest constructor
+    data_path: /home/grimmlins/IL_workspace/data_collection_output
+    keys_traj:
+      - gripper_pressure
+      - gripper_distance
+      - joint_states
+      - servo_node_delta_twist_cmds
+    keys_global: []  # If you don't have global keys, leave it empty
+    preloaded: true
 
     window_size_train: 20
     window_size_test:  20
@@ -57,6 +57,8 @@ dataset_cfg:
     pad_after: true
     pad_type: 'near'
     random_seed: ${seed}
+
+
 
 
   batch_size: ${batch_size}
