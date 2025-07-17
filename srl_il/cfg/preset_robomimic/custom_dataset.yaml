@@ -7,7 +7,7 @@ data:
     - ['actions', 'actions', null, null]  # Use actions as the trajectory data
     - ['gripper_pressure', 'pressure', null, 1]  # Gripper pressure data
     - ['gripper_distance', 'distance', null, 1]  # Gripper distance data
-    - ['servo_node/delta_twist_cmds', 'twist_cmd', null, null]  # Action for robot's twist command (to control robot's movement)
+    - ['servo_node_delta_twist_cmds', 'twist_cmd', null, null]  # Action for robot's twist command (to control robot's movement)
   preloaded: true
   num_worker: 0
 

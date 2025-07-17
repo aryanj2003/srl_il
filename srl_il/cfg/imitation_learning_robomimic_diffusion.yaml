@@ -33,23 +33,35 @@ dataset_cfg:
   #   pad_type: 'near'
   #   random_seed: ${seed}
 
-
   data:
     _target_: srl_il.dataset.custom_sequence_dataset.CustomSequenceTrainValTest
+
     trajectory_dataset:
-      _target_: your.module.CustomTrajectoryDataset
-      data_path: ${preset_robomimic.data.data_path}
-      keys_traj: ${preset_robomimic.data.keys_traj}
-      preloaded: ${preset_robomimic.data.preloaded}
-      num_worker: ${preset_robomimic.data.num_worker}
+      _target_: srl_il.dataset.implement_dataset_base.CustomTrajectoryDataset
+      data_path: "/home/grimmlins/IL_workspace/data_collection_output"
+      keys_traj:
+        - ['actions',                    'actions',            null, null]
+        - ['gripper_pressure',           'pressure',           null,  1  ]
+        - ['gripper_distance',           'distance',           null,  1  ]
+        - ['servo_node_delta_twist_cmds','twist_cmd',          null, null]
+      preloaded: true
+      num_worker: 0
+
     window_size_train: 20
-    window_size_test: 20
+    window_size_test:  20
     keys_traj_cfg: ${preset_robomimic.data.keys_traj}
     keys_global_cfg: []
+    test_fraction: 0.1
+    val_fraction: 0.1
+    pad_before: false
+    pad_after: true
+    pad_type: 'near'
+    random_seed: ${seed}
+
 
   batch_size: ${batch_size}
   pin_memory: true
-  num_workers: ${preset_rbomimic.data.num_worker} # we don't need a seperate worker if the data is preloaded
+  num_workers: ${preset_robomimic.data.num_worker} # we don't need a seperate worker if the data is preloaded
 
 
 algo_cfg:
