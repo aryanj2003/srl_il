@@ -26,7 +26,7 @@ class CustomTrajectoryDataset(TrajectoryDataset):
         self.dataset = {}
 
         for key in keys_traj:
-            filename = f"_{key}.yaml"                
+            filename = f"{key}.yaml"                
             path = os.path.join(self.data_path, filename)
             print(f"YAML file path: {path}")
             content = open(path, 'r').read()
@@ -37,6 +37,9 @@ class CustomTrajectoryDataset(TrajectoryDataset):
             try:
                 loaded_data = yaml.load(content, Loader=yaml.SafeLoader)
                 print(f"Loaded {len(loaded_data)} records for {key}")
+
+                # Debugging: Print the structure of the loaded data
+                print(f"Sample record for {key}: {loaded_data[0] if loaded_data else 'No data'}")
 
                 # convert any list-values inside each record to tuples
                 for rec in loaded_data:

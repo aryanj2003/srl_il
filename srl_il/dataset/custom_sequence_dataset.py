@@ -1,14 +1,21 @@
 # srl_il/srl_il/dataset/custom_sequence_dataset.py
 
-
-from srl_il.dataset.robomimic_dataset import RobomimicTrajectorySequenceDataset
-from srl_il.dataset.dataset_base import get_train_val_test_seq_datasets
+from srl_il.dataset.dataset_base import SequenceDataset, get_train_val_test_seq_datasets
 from srl_il.dataset.implement_dataset_base import CustomTrajectoryDataset
 
 
-class CustomSequenceDataset(RobomimicTrajectorySequenceDataset):
-    def __init__(self, trajectory_dataset, window_size=21, keys_traj_cfg=None,
-                 keys_global_cfg=None, **kwargs):
+class CustomSequenceDataset(SequenceDataset):
+    def __init__(
+        self,
+        trajectory_dataset: CustomTrajectoryDataset,
+        window_size: int = 21,
+        keys_traj_cfg: list = None,
+        keys_global_cfg: list = None,
+        pad_before: bool = False,
+        pad_after: bool = False,
+        pad_type: str = 'near',
+        **kwargs,
+    ):
         """
         Args:
             trajectory_dataset:  your CustomTrajectoryDataset instance
@@ -16,20 +23,18 @@ class CustomSequenceDataset(RobomimicTrajectorySequenceDataset):
             keys_traj_cfg (list):  the [[name, src_name, start, end], …] spec
             keys_global_cfg (list): same idea for any global keys
         """
-        # 1) store your configs
-        self.keys_traj_cfg   = keys_traj_cfg   or []
+        self.keys_traj_cfg = keys_traj_cfg or []
         self.keys_global_cfg = keys_global_cfg or []
-        # 2) let the parent set itself up
         super().__init__(
             trajectory_dataset,
             window_size=window_size,
             keys_traj=self.keys_traj_cfg,
             keys_global=self.keys_global_cfg,
-            **kwargs
+            pad_before=pad_before,
+            pad_after=pad_after,
+            pad_type=pad_type,
+            **kwargs,
         )
-
-
-
 
 
 class CustomSequenceTrainValTest:
@@ -39,36 +44,45 @@ class CustomSequenceTrainValTest:
     """
     def __init__(
         self,
-        # these names must match what you put in the YAML
-        data_path,
-        keys_traj,
-        keys_global,
-        preloaded,
-        test_fraction,
-        val_fraction,
-        window_size_train,
-        window_size_test,
-        pad_before,
-        pad_after,
-        pad_type,
-        random_seed,
-        num_worker=None,       # if you need it
-        **kwargs,              # catch any extras
+        data_path: str,
+        keys_traj: list,
+        keys_global: list,
+        preloaded: bool,
+        test_fraction: float,
+        val_fraction: float,
+        window_size_train: int,
+        window_size_test: int,
+        pad_before: bool,
+        pad_after: bool,
+        pad_type: str,
+        random_seed: int,
+        num_worker: int = None,
+        **kwargs,
     ):
-        # 1) raw trajectories
+        # 1) load raw trajectories from YAML
         traj_ds = CustomTrajectoryDataset(
             data_path=data_path,
             keys_traj=keys_traj,
             data_type="train",
         )
 
-        # 2) sliding‐window sequence
+        print(f"keys_traj: {keys_traj}")
+        print(f"keys_global: {keys_global}")
+
+
+        # 2) wrap in sliding‐window sequence dataset
         seq_ds = CustomSequenceDataset(
             trajectory_dataset=traj_ds,
             window_size=window_size_train,
             keys_traj_cfg=keys_traj,
             keys_global_cfg=keys_global,
+            pad_before=pad_before,
+            pad_after=pad_after,
+            pad_type=pad_type,
         )
+
+        # Debugging: Check the number of sequences in the dataset
+        print(f"Total sequences in the dataset: {len(seq_ds)}")
 
         # 3) split into train/val/test
         self.train_data, self.val_data, self.test_data = get_train_val_test_seq_datasets(
@@ -85,4 +99,7 @@ class CustomSequenceTrainValTest:
             random_seed=random_seed,
         )
 
-    # Hydra will look for attributes .train_data, .val_data, .test_data
+        # Debugging: Check the number of items in train/val/test
+        print(f"Train data: {len(self.train_data)} sequences")
+        print(f"Validation data: {len(self.val_data)} sequences")
+        print(f"Test data: {len(self.test_data)} sequences")

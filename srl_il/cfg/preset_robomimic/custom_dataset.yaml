@@ -4,10 +4,11 @@ task_tag: gripper_task
 data:
   data_path: "/home/grimmlins/IL_workspace/data_collection_output"  # Update this to the actual path of your JSON files
   keys_traj:
-    - ['actions', 'actions', null, null]  # Use actions as the trajectory data
-    - ['gripper_pressure', 'pressure', null, 1]  # Gripper pressure data
-    - ['gripper_distance', 'distance', null, 1]  # Gripper distance data
-    - ['servo_node_delta_twist_cmds', 'twist_cmd', null, null]  # Action for robot's twist command (to control robot's movement)
+  - [actions, actions, null, null]  # Use actions as the trajectory data
+  - [gripper_pressure, pressure, null, 1]  # Gripper pressure data
+  - [gripper_distance, distance, null, 1]  # Gripper distance data
+  - [servo_node_delta_twist_cmds, twist_cmd, null, null]  # Action for robot's twist command
+
   preloaded: true
   num_worker: 0
 

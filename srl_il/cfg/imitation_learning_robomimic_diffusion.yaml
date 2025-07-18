@@ -33,30 +33,34 @@ dataset_cfg:
   #   pad_type: 'near'
   #   random_seed: ${seed}
 
-
   data:
     _target_: srl_il.dataset.custom_sequence_dataset.CustomSequenceTrainValTest
 
-    # Provide these arguments to CustomSequenceTrainValTest constructor
-    data_path: /home/grimmlins/IL_workspace/data_collection_output
+    # ---- these four go straight into CustomSequenceTrainValTest ----
+    data_path: "/home/grimmlins/IL_workspace/data_collection_output"
     keys_traj:
       - gripper_pressure
       - gripper_distance
       - joint_states
       - servo_node_delta_twist_cmds
-    keys_global: []  # If you don't have global keys, leave it empty
-    preloaded: true
 
+    keys_global: []
+    preloaded: true
+    test_fraction: 0.1
+    val_fraction:  0.1
+
+    # ---- window/padding params ----
     window_size_train: 20
     window_size_test:  20
-    keys_traj_cfg: ${preset_robomimic.data.keys_traj}
-    keys_global_cfg: []
-    test_fraction: 0.1
-    val_fraction: 0.1
     pad_before: false
-    pad_after: true
-    pad_type: 'near'
+    pad_after:  true
+    pad_type:   near
+
+    # tell it how to slice—your original 4‑item lists:
+    # keys_traj_cfg: ${preset_robomimic.data.keys_traj}
+    # keys_global_cfg: []
     random_seed: ${seed}
+
 
 
 

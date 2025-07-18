@@ -2,7 +2,7 @@ import torch
 from implement_dataset_base import CustomTrajectoryDataset  # Import your custom dataset class
 
 # Define the path to your dataset and the keys for trajectory data
-data_path = '/home/grimmlins/IL_workspace/data_collection_output'
+data_path = '/home/aryan/IL_Workspace/data_collection_output'
 keys_traj = [
     'gripper_pressure',
     'servo_node_delta_twist_cmds',
