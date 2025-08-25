@@ -7,6 +7,8 @@ import imageio
 import time
 import json
 from tqdm import tqdm
+from omegaconf import OmegaConf
+
 
 class SimulationEnvMixin(AutoInit, cfgname_and_funcs=(("sim_env_cfg", "_init_sim_env"),)):
     """

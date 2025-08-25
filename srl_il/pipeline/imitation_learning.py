@@ -10,7 +10,8 @@ from .pipeline_base import Pipeline, AlgoMixin, WandbMixin, DatasetMixin, Lr_Sch
 from .vis_mixins.env_rollout_mixin import SimulationEnvMixin
 from .vis_mixins.visualize_projected_actions import ActionProjectorMixin
 from .data_augmentation import DataAugmentationMixin
-
+from srl_il.dataset.custom_sequence_dataset import CustomSequenceDataset
+from srl_il.dataset.implement_dataset_base import CustomTrajectoryDataset
 import torch
 import torch.optim as optim
 import torch.optim.lr_scheduler as lr_scheduler
@@ -18,6 +19,7 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 import wandb
 import json
+import logging
 
 
 class ImitationLearningPipeline(Pipeline, AlgoMixin, DatasetMixin, Lr_SchedulerMixin, WandbMixin, DataAugmentationMixin, NormalizationMixin, SimulationEnvMixin, ActionProjectorMixin):
@@ -38,6 +40,120 @@ class ImitationLearningPipeline(Pipeline, AlgoMixin, DatasetMixin, Lr_SchedulerM
         self.best_eval_loss = 1e10
         if self.training_config.rollout.enabled:
             os.makedirs(self.training_config.rollout.video.video_dir, exist_ok=True)
+
+
+        # Set up logging
+        logging.basicConfig(
+            filename=os.path.join(self.output_dir, "pipeline_init.log"),
+            level=logging.DEBUG,
+            format="%(asctime)s [DEBUG] %(message)s"
+        )
+
+        # Initialize datasets
+        logging.debug("Initializing datasets in _init_workspace")
+        print(f"[DEBUG] Initializing datasets in _init_workspace")
+        data_path = cfg.get("dataset_cfg", {}).get("data_path", "/home/aryan/IL_Workspace/data_collection_output")
+        keys_traj = ["gripper_pressure", "servo_node_delta_twist_cmds", "force_torque_sensor_broadcaster_wrench", "joint_states_fixed"]
+        keys_traj_cfg = [[key, key, None, None] for key in keys_traj]  # [name, src_name, start, end]
+        
+        try:
+            # Initialize CustomTrajectoryDataset
+            trajectory_dataset = CustomTrajectoryDataset(
+                data_path=data_path,
+                keys_traj=keys_traj,
+                data_type="train",
+                joint_states_stride=1,
+                preloaded=False
+            )
+            logging.debug("CustomTrajectoryDataset initialized successfully")
+            print(f"[DEBUG] CustomTrajectoryDataset initialized successfully")
+
+            # Initialize CustomSequenceDataset
+            self.train_dataset = CustomSequenceDataset(
+                trajectory_dataset=trajectory_dataset,
+                window_size=5,
+                keys_traj_cfg=keys_traj_cfg,
+                keys_global_cfg=[],
+                pad_before=False,
+                pad_after=False,
+                pad_type='near',
+                device=cfg.get("dataset_cfg", {}).get("device", "cpu")
+            )
+            logging.debug("train_dataset initialized successfully")
+            print(f"[DEBUG] train_dataset initialized successfully")
+        except Exception as e:
+            logging.error(f"Failed to initialize train_dataset: {e}")
+            print(f"[ERROR] Failed to initialize train_dataset: {e}")
+            raise
+
+        # Set eval_dataset to None unless specified in config
+        self.eval_dataset = None
+        eval_data_path = cfg.get("dataset_cfg", {}).get("eval_data_path")
+        if eval_data_path:
+            try:
+                eval_trajectory_dataset = CustomTrajectoryDataset(
+                    data_path=eval_data_path,
+                    keys_traj=keys_traj,
+                    data_type="test",
+                    joint_states_stride=1,
+                    preloaded=False
+                )
+                self.eval_dataset = CustomSequenceDataset(
+                    trajectory_dataset=eval_trajectory_dataset,
+                    window_size=5,
+                    keys_traj_cfg=keys_traj_cfg,
+                    keys_global_cfg=[],
+                    pad_before=False,
+                    pad_after=False,
+                    pad_type='near',
+                    device=cfg.get("dataset_cfg", {}).get("device", "cpu")
+                )
+                logging.debug("eval_dataset initialized successfully")
+                print(f"[DEBUG] eval_dataset initialized successfully")
+            except Exception as e:
+                logging.warning(f"Failed to initialize eval_dataset: {e}, setting to None")
+                print(f"[WARNING] Failed to initialize eval_dataset: {e}, setting to None")
+                self.eval_dataset = None
+
+        # Try calling DatasetMixin._init_dataset for additional setup
+        try:
+            self._init_dataset(**cfg)
+            logging.debug("DatasetMixin._init_dataset called successfully")
+            print(f"[DEBUG] DatasetMixin._init_dataset called successfully")
+        except Exception as e:
+            logging.warning(f"Failed to call DatasetMixin._init_dataset: {e}")
+            print(f"[WARNING] Failed to call DatasetMixin._init_dataset: {e}")
+
+        # Initialize DataLoaders with custom collate_fn
+        try:
+            self.train_loader = DataLoader(
+                self.train_dataset,
+                batch_size=32,
+                shuffle=True,
+            )
+            logging.debug("train_loader initialized successfully")
+            print(f"[DEBUG] train_loader initialized successfully")
+        except Exception as e:
+            logging.error(f"Failed to initialize train_loader: {e}")
+            print(f"[ERROR] Failed to initialize train_loader: {e}")
+            raise
+
+        if self.eval_dataset is not None:
+            try:
+                self.eval_loader = DataLoader(
+                    self.eval_dataset,
+                    batch_size=32,
+                    shuffle=False,
+                    collate_fn=CustomSequenceDataset.collate_fn
+                )
+                logging.debug("eval_loader initialized successfully")
+                print(f"[DEBUG] eval_loader initialized successfully")
+            except Exception as e:
+                logging.warning(f"Failed to initialize eval_loader: {e}, setting to None")
+                print(f"[WARNING] Failed to initialize eval_loader: {e}, setting to None")
+                self.eval_loader = None
+        else:
+            self.eval_loader = None
 
     def save_checkpoint(self, filepath):
         """Saves a checkpoint alowing to restart training from here
@@ -193,4 +309,3 @@ class ImitationLearningPipeline(Pipeline, AlgoMixin, DatasetMixin, Lr_SchedulerM
             if save_checkpoint:
                 self.save_checkpoint(os.path.join(self.output_dir, "checkpoints", f"checkpoint_{epoch}.pth"))
                 print(f"Checkpoint saved in {self.output_dir}.\n")
-

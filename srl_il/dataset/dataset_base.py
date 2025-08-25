@@ -10,6 +10,8 @@ import pathlib
 import struct
 import torch.nn.functional as F
 from glob import glob
+import pdb
+import logging, os
 
 
 class TrajectoryDataset(Dataset, abc.ABC):
@@ -117,28 +119,35 @@ class SequenceDataset(Dataset):
     ):
         self._dataset = dataset
         self._window_size = window_size
+        print(f"[SequenceDataset] START init: #traj={len(dataset)}, window_size={window_size}")
         self._keys_traj = keys_traj
         self._keys_global = keys_global
         self._pad_before = pad_before
         self._pad_after = pad_after
         self._pad_type = pad_type
 
+
+
         # [start: end] will be loaded from the dataset[idx]
-        self._idx_to_slice = [] # list of tuples: (idx, start, end, pad_before, pad_after)
+        self._idx_to_slice = []  # list of tuples: (row_indx, start, end, pad_before, pad_after)
 
-        for i in range(len(self.dataset)):  # type: ignore
-            seq_len = self.dataset.get_seq_length(i)  # avoid reading actual seq (slow)
-            for j in range(-window_size+1, seq_len): # the logical start of the window
-                start = max(0, j)
-                end = min(seq_len, j + window_size)
-                pad_before = max(0, -j)
-                pad_after = max(0, j + window_size - seq_len)
+        seq_len = len(self.dataset)  # total time steps
+        for j in range(-window_size+1, seq_len):  # logical window start
+            start = max(0, j)
+            end = min(seq_len, j + window_size)
+            pad_before = max(0, -j)
+            pad_after  = max(0, j + window_size - seq_len)
 
-                if (not self._pad_before) and pad_before > 0:
-                    continue
-                if (not self._pad_after) and pad_after > 0:
-                    continue
-                self._idx_to_slice.append((i, start, end, pad_before, pad_after))
+            if (not self._pad_before) and pad_before > 0:
+                continue
+            if (not self._pad_after) and pad_after > 0:
+                continue
+
+            # row_indx fixed at 0 because your dataset indexes time, not multiple trajs
+            self._idx_to_slice.append((0, start, end, pad_before, pad_after))
+
+
+        print(f"[SequenceDataset] DONE slicing: total windows={len(self._idx_to_slice)}")
 
         # check the keys
         data_sample_traj, data_sample_global = self.dataset[0]
@@ -190,55 +199,134 @@ class SequenceDataset(Dataset):
 
     def __len__(self):
         return len(self._idx_to_slice)
+    
 
     def __getitem__(self, idx):
-        i, start, end, pad_before, pad_after = self._idx_to_slice[idx]
+        # setup logging
+        output_dir = "/home/aryan/IL_Workspace/srl_il/output"
+        os.makedirs(output_dir, exist_ok=True)
+        logging.basicConfig(
+            filename=f"{output_dir}/sequence_getitem_debug.log",
+            level=logging.DEBUG,
+            format="%(asctime)s [DEBUG] %(message)s"
+        )
+
+        # Which index to get and window size
+        row_indx, start, end, pad_before, pad_after = self._idx_to_slice[idx]
         traj_masks = {}
-        ret_dict = {}
-        data_traj, data_global = self.dataset[i]
+        ret_dict   = {}
+
+        # Pull out one “trajectory” sample
+        step_i, global_i = self.dataset[row_indx]
+
+        # 1) Global keys stay identical
         for key in self._keys_global:
-            # global_tuple += (data_global[key],)
-            ret_dict[key] = self.dataset.load(data_global[key], key, is_global=True)
-        for key, src, key_start, key_end in self._keys_traj:
-            key_start = 0 if key_start is None else key_start # idx in the window
-            key_end = self._window_size if key_end is None else key_end # idx in the window
+            ret_dict[key] = self.dataset.load(global_i[key], key, is_global=True)
 
-            slice = data_traj[src][start:end]
+        # 2) Per-timestep keys
+        expected_cols = {
+            'gripper_pressure': 3,
+            'joint_states_fixed': 24,
+            'force_torque_sensor_broadcaster_wrench': 6,
+            'servo_node_delta_twist_cmds': 6
+        }
+        W = self._window_size
 
-            key_pad_before = max(0, pad_before - key_start)
-            key_start = max(0, key_start - pad_before) # idx in slice
-            key_pad_after = max(0, pad_after - (self._window_size-key_end))
-            key_end = min(end-start, end-start - (self._window_size - key_end - pad_after)) # idx in slice
-            # key_pad_before + (key_end - key_start) + key_pad_after == self._window_size
-
+        for key, src, *_ in self._keys_traj:
+            print(f"[DBG] idx={idx}, traj_i={row_indx}, key={key!r}, src={src!r}, "
+          f"start={start}, end={end}, "
+          f"type(data_traj[src])={type(step_i[src])}, "
+          f"value={step_i[src][start:end]!r}")
+            D = expected_cols[src]
             traj_parts = []
             mask_parts = []
-            if key_pad_before > 0:
-                if self._pad_type == "zero":
-                    traj_parts.append(torch.zeros(key_pad_before, *slice.shape[1:], dtype=slice.dtype))
-                elif self._pad_type == "near":
-                    traj_parts.append(torch.repeat_interleave(self.dataset.load(slice[:1], src, is_global=False),
-                                key_pad_before, dim=0))
-                mask_parts.append(torch.zeros(key_pad_before, dtype=torch.bool))
+            for w in range(W):
+                t = start + (w - pad_before)
+                if 0 <= t < len(self._dataset):
+                    row = self._dataset[t][0]  
+                    if (src in row) and (row[src] is not None):
+                        data = row[src]
 
-            if key_end >0 and key_start < end-start:
-                traj_parts.append(self.dataset.load(slice[key_start:key_end], src, is_global=False))
-                mask_parts.append(torch.ones(key_end - key_start, dtype=torch.bool))
+                        # normalize data to a 1D list of length D
+                        if isinstance(data, torch.Tensor):
+                            data = data.detach().cpu().view(-1).tolist()
+                        elif isinstance(data, (list, tuple, np.ndarray)):
+                            data = np.asarray(data).reshape(-1).tolist()
+                        else:
+                            print(f"[SEQ] {src}@t={t}: unsupported type {type(data)}; marking invalid")
+                            part = torch.zeros(D)
+                            mask_val = False
+                            traj_parts.append(part); mask_parts.append(mask_val)
+                            continue
 
-            if key_pad_after > 0:
-                if self._pad_type == "zero":
-                    traj_parts.append(torch.zeros(key_pad_after, *slice.shape[1:], dtype=slice.dtype))
-                elif self._pad_type == "near":
-                    traj_parts.append(torch.repeat_interleave(self.dataset.load(slice[-1:], src, is_global=False), 
-                                    key_pad_after, dim=0))
-                mask_parts.append(torch.zeros(key_pad_after, dtype=torch.bool))
-            
-            # traj_tuple += (torch.cat(traj_parts, dim=0),)
-            # traj_masks += (torch.cat(mask_parts, dim=0),)
-            ret_dict[key] = torch.cat(traj_parts, dim=0)
-            traj_masks[key] = torch.cat(mask_parts, dim=0)
+                        if len(data) != D:
+                            print(f"[SEQ] {src}@t={t}: length {len(data)} != expected {D}; marking invalid")
+                            part = torch.zeros(D)
+                            mask_val = False
+                        else:
+                            part = torch.tensor(data)
+                            # invalid if any non-finite (NaN/±Inf)
+                            if not torch.isfinite(part).all():
+                                print(f"[SEQ] {src}@t={t}: non-finite values detected; marking invalid")
+                                part = torch.zeros(D)
+                                mask_val = False
+                            else:
+                                mask_val = True
+                    else:
+                        # key missing for this timestep → invalid (no fake zeros counted as real)
+                        print(f"[SEQ] {src}@t={t}: missing; mask=False")
+                        part = torch.zeros(D)
+                        mask_val = False
+                else:
+                    part = torch.zeros(D)
+                    mask_val = False
 
+                traj_parts.append(part)
+                mask_parts.append(torch.tensor(mask_val, dtype=torch.bool))
+
+            # → [W, D]
+            traj_tensor = torch.stack(traj_parts, dim=0)
+            # → [W]
+            traj_mask   = torch.stack(mask_parts, dim=0)
+
+            ret_dict[key]   = traj_tensor
+            traj_masks[key] = traj_mask
+
+        
+
+        # --- robust aliasing for actions (maps by SOURCE name) ---
+        # If your keys_traj maps ('actions_cleaned', 'servo_node_delta_twist_cmds', ...),
+        # this will alias actions <- actions_cleaned safely.
+        src_to_dest = {src: key for (key, src, *_) in self._keys_traj}
+        twist_dest = src_to_dest.get('servo_node_delta_twist_cmds')
+
+        if twist_dest and twist_dest in ret_dict:
+            ret_dict['actions']   = ret_dict[twist_dest]
+            traj_masks['actions'] = traj_masks[twist_dest]
+        elif 'servo_node_delta_twist_cmds' in ret_dict:
+            # fallback if dest == src
+            ret_dict['actions']   = ret_dict['servo_node_delta_twist_cmds']
+            traj_masks['actions'] = traj_masks['servo_node_delta_twist_cmds']
+        else:
+            # last-resort safety (prevents crashes if config changes)
+            W, D = self._window_size, 6
+            ret_dict['actions']   = torch.zeros(W, D, dtype=torch.float32)
+            traj_masks['actions'] = torch.zeros(W, dtype=torch.bool)
+
+
+
+        # joint_states_fixed is [W, 24] in order: position(12) + velocity(6) + effort(6)
+        js = ret_dict['joint_states_fixed']          # [W,24]
+        ret_dict['joint_states_position'] = js[..., :12]
+        ret_dict['joint_states_velocity'] = js[..., 12:18]
+        ret_dict['joint_states_effort']   = js[..., 18:24]
+
+        # re-use the same mask
+        traj_masks['joint_states_position'] = traj_masks['joint_states_fixed']
+        traj_masks['joint_states_velocity'] = traj_masks['joint_states_fixed']
+        traj_masks['joint_states_effort']   = traj_masks['joint_states_fixed']
         return ret_dict, traj_masks
+
 
 
 def get_train_val_test_seq_datasets(

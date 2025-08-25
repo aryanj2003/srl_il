@@ -1,16 +1,37 @@
-# new_config.yaml (based on your JSON files)
-
 task_tag: gripper_task
 data:
-  data_path: "/home/grimmlins/IL_workspace/data_collection_output"  # Update this to the actual path of your JSON files
+  data_path: "/home/aryan/IL_Workspace/data_collection_output"  # Update this to the actual path of your JSON files
+  # for your loader: exactly the YAML‑filenames (no nested lists)
   keys_traj:
-  - [actions, actions, null, null]  # Use actions as the trajectory data
-  - [gripper_pressure, pressure, null, 1]  # Gripper pressure data
-  - [gripper_distance, distance, null, 1]  # Gripper distance data
-  - [servo_node_delta_twist_cmds, twist_cmd, null, null]  # Action for robot's twist command
+    names:
+        - gripper_pressure
+        - joint_states_fixed
+        - force_torque_sensor_broadcaster_wrench
+        - servo_node_delta_twist_cmds
+    specs:
+      - [gripper_pressure, gripper_pressure, null, null]
+      - [actions_cleaned,  servo_node_delta_twist_cmds, null, null]
+      - [joint_states_fixed, joint_states_fixed, null, null]   # 24-D (pos+vel+eff)
+      - ['force_torque_sensor_broadcaster_wrench', 'force_torque_sensor_broadcaster_wrench', null, null]
 
-  preloaded: true
+
+  preloaded: false
   num_worker: 0
+
+  # ── these four used by your CustomSequenceTrainValTest split ──
+  test_fraction:      0.1
+  val_fraction:       0.1
+  window_size_train: 5
+  window_size_test:   5
+
+  # ── padding for your sequence slices ──
+  pad_before: false
+  pad_after:  true
+  pad_type:   near
+
+  joint_states_stride: 10    # only take every 10th record
+  device: ${algo_cfg.algo_cfg.device}  # Add device to inherit from algo_cfg
+
 
 target_dims:
   actions: 6  # or 7, depending on your action dimensions
@@ -45,4 +66,4 @@ env:
 
 train:
   rollout_horizon: 300
-  num_epochs: 200
+  num_epochs: 80

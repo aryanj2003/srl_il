@@ -3,7 +3,7 @@ defaults:
   - preset_robomimic: custom_dataset 
   - _self_
 
-batch_size: 128
+batch_size: 32
 seed: 43
 debugrun: false
 wandb_cfg:
@@ -34,32 +34,32 @@ dataset_cfg:
   #   random_seed: ${seed}
 
   data:
+
     _target_: srl_il.dataset.custom_sequence_dataset.CustomSequenceTrainValTest
 
-    # ---- these four go straight into CustomSequenceTrainValTest ----
-    data_path: "/home/grimmlins/IL_workspace/data_collection_output"
-    keys_traj:
-      - gripper_pressure
-      - gripper_distance
-      - joint_states
-      - servo_node_delta_twist_cmds
+    # loader wants these four
+    data_path:     ${preset_robomimic.data.data_path}
+    keys_traj:     ${preset_robomimic.data.keys_traj.names}
+    keys_global:   []
+    preloaded:     ${preset_robomimic.data.preloaded}
 
-    keys_global: []
-    preloaded: true
-    test_fraction: 0.1
-    val_fraction:  0.1
+    # split arguments
+    test_fraction:      ${preset_robomimic.data.test_fraction}
+    val_fraction:       ${preset_robomimic.data.val_fraction}
+    window_size_train:  ${preset_robomimic.data.window_size_train}
+    window_size_test:   ${preset_robomimic.data.window_size_test}
+    pad_before:         ${preset_robomimic.data.pad_before}
+    pad_after:          ${preset_robomimic.data.pad_after}
+    pad_type:           ${preset_robomimic.data.pad_type}
+    random_seed:        ${seed}
 
-    # ---- window/padding params ----
-    window_size_train: 20
-    window_size_test:  20
-    pad_before: false
-    pad_after:  true
-    pad_type:   near
+    joint_states_stride: 5
 
-    # tell it how to slice—your original 4‑item lists:
-    # keys_traj_cfg: ${preset_robomimic.data.keys_traj}
-    # keys_global_cfg: []
-    random_seed: ${seed}
+    # slicer wants the 4‑item specs
+    keys_traj_cfg:   ${preset_robomimic.data.keys_traj.specs}
+    keys_global_cfg: []
+
+    device: ${algo_cfg.algo_cfg.device}  # Inherit device from algo_cfg
 
 
 
@@ -75,19 +75,20 @@ algo_cfg:
   algo_cfg:
     device: cuda
     target_dims: ${preset_robomimic.target_dims}
-    T_target: 20
+    T_target: 5
     network_is_causal: false
-    network_group_keys: ['low_dim', 'img0', 'img1']
+    network_group_keys: ['low_dim']
     network_cfg:
-      d_model: 256
-      nhead: 8
+      d_model: 64
+      nhead: 2    # → head_dim = 64/2 = 32 
       num_encoder_layers: 3
-      dim_feedforward: 1024
+      dim_feedforward: 256    # = 4 × d_model (good rule from Transformer paper)
       dropout: 0.1
       activation: 'relu'
-    scheduler_cfg:
+      
+    scheduler_cfg:      # diffusion (noise) schedule
       num_train_timesteps: 100
-      num_inference_steps: 100
+      num_inference_steps: 50      # was 100; faster rollout with little loss
       beta_schedule: squaredcos_cap_v2
       variance_type: fixed_small
       clip_sample: True
@@ -109,32 +110,19 @@ algo_cfg:
         optm_cls: torch.optim.Adam
         lr: 0.0001
 
+
   obs_encoder_cfg:
-    output_dim: 256
+    output_dim: 64
     obs_groups_cfg:
       low_dim:
-        datakeys: ['robot0_eef_pos', 'robot0_eef_quat', 'robot0_gripper_qpos']
+        datakeys: ['actions_cleaned', 'gripper_pressure', 'force_torque_sensor_broadcaster_wrench', 'joint_states_fixed']
         encoder_cfg:
           type: lowdim_concat
-          input_dim_total: 9 # 3 + 4 + 2 
-        posemb_cfg:
-          type: none
-      img0:
-        datakeys: ['img0']
-        encoder_cfg:
-          type: resnet18 # crop_resnet18
-          pretrained: true
-        posemb_cfg:
-          type: none
-      img1:
-        datakeys: ['img1']
-        encoder_cfg:
-          type: resnet18 # crop_resnet18
-          pretrained: true
+          input_dim_total: 39 # dims: 6 (twist) + 3 (pressure) + 6 (wrench) + 24 (joint_states) = 39
         posemb_cfg:
           type: none
     group_emb_cfg:
-      type: none # none, whole_seq_sine, each_group_learned, whole_seq_learned
+      type: none
 
   policy_cfg: 
     policy_bs: 1
@@ -148,89 +136,95 @@ algo_cfg:
       type: "simple"
       update_every: 10
 
-    policy_obs_list: # policy names and temporal length
-      - ['robot0_eef_pos', 1]
-      - ['robot0_eef_quat', 1]
-      - ['robot0_gripper_qpos', 1]
-      - ['img0', 1] 
-      - ['img1', 1]
+    policy_obs_list:
+      - ['actions_cleaned0', 1]
+      - ['gripper_pressure', 1]
+      - ['force_torque_sensor_broadcaster_wrench', 1]
+      - ['joint_states_fixed', 1]
 lr_scheduler_cfg:
   network:
     type: "diffusers"
     name: cosine
     params:
-      num_warmup_steps: 200
-      num_training_steps: 800000 # number per epoch * num_epochs
+      num_warmup_steps: 125
+      num_training_steps: 2500  # = num_epochs(100) * steps/epoch(25)
     step_with_metrics: false
   obs_encoder:
     type: "diffusers"
     name: cosine
     params:
-      num_warmup_steps: 1000
-      num_training_steps: 800000 # number per epoch * num_epochs
+      num_warmup_steps: 125
+      num_training_steps: 2500  # = num_epochs(100) * steps/epoch(25)
     step_with_metrics: false
 
 
 training_cfg:
   num_epochs: ${preset_robomimic.train.num_epochs} 
-  num_steps_per_epoch: 200
-  num_eval_steps_per_epoch: 20
-  steps_saving: 10
+  num_steps_per_epoch: 5
+  num_eval_steps_per_epoch: 10
+  steps_saving: 5
   rollout:
-    every_n_epoch: 20
+    every_n_epoch: 10
     enabled: true
-    num_episodes: 10
+    num_episodes: 5
     horizon: ${preset_robomimic.train.rollout_horizon}
     terminate_on_success: true
     video:
       video_dir: ${output_dir}/video
       video_skip: 5
 
+  # scheduler_cfg:
+  #   _target_: torch.optim.lr_scheduler.CosineAnnealingLR
+  #   T_max: 50          # decay period
+  #   eta_min: 1e-6      # final LR floor
+
 
 normalizer_cfg:
-  actions: # the target to reconstruct
+  actions_cleaned:
     type: dataset_stats
     min_max: true
-    dataname: actions
-  robot0_eef_pos:
+    dataname: actions_cleaned
+    is_traj_key: true
+  actions:
     type: dataset_stats
-    dataname: robot0_eef_pos
-  robot0_eef_quat:
-    type: hardcode
-    mean: 0.0
-    std: 1.0
-  robot0_gripper_qpos:
+    min_max: true
+    # use the same underlying data as actions_cleaned
+    dataname: actions_cleaned
+    is_traj_key: true
+  gripper_pressure:
     type: dataset_stats
-    dataname: robot0_gripper_qpos
-  img0: # image net norm mean = [0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-    type: hardcode
-    mean: [[[0.485]], [[0.456]], [[0.406]]]
-    std: [[[0.229]], [[0.224]], [[0.225]]]
-  img1:
-    type: hardcode
-    mean: [[[0.485]], [[0.456]], [[0.406]]]
-    std: [[[0.229]], [[0.224]], [[0.225]]]
-  img2:
-    type: hardcode
-    mean: [[[0.485]], [[0.456]], [[0.406]]]
-    std: [[[0.229]], [[0.224]], [[0.225]]]
-  img3:
-    type: hardcode
-    mean: [[[0.485]], [[0.456]], [[0.406]]]
-    std: [[[0.229]], [[0.224]], [[0.225]]]
+    min_max: true
+    dataname: gripper_pressure
+    is_traj_key: true
+  force_torque_sensor_broadcaster_wrench:
+    type: dataset_stats
+    min_max: true
+    dataname: force_torque_sensor_broadcaster_wrench
+    is_traj_key: true
+  joint_states_fixed:
+    type: dataset_stats
+    min_max: true
+    dataname: joint_states_fixed
+    is_traj_key: true
 
-data_augmentation_cfg: # data augmetation is only used for the data loaded from dataset, no simulation data augmentation
+data_augmentation_cfg:
   data_augments:
-    - outname: robot0_eef_pos
+    - outname: actions_cleaned
       type: gaussian_noise
       mean: 0.0
       std: 0.001
-    - outname: robot0_gripper_qpos
+    - outname: gripper_pressure
       type: gaussian_noise
       mean: 0.0
       std: 0.001
-    # - outname: actions # this is used for absolute action
-    #   type: abs_action_rot_2_6d
+    - outname: force_torque_sensor_broadcaster_wrench
+      type: gaussian_noise
+      mean: 0.0
+      std: 0.001
+    - outname: joint_states_fixed
+      type: gaussian_noise
+      mean: 0.0
+      std: 0.001
 
 sim_env_cfg:
   env: ${preset_robomimic.env}
@@ -242,3 +236,220 @@ hydra:
   output_subdir: ${output_dir}/hydra
   run:
     dir: .
+
+
+
+
+
+
+# defaults:
+#   # presets do not directly configs the pipeline or the algothm. However it provides necessary information to resolve this config
+#   - preset_robomimic: lift_image 
+#   - _self_
+
+# batch_size: 128
+# seed: 43
+# debugrun: false
+# wandb_cfg:
+#   project: robomimic
+#   run_name: ${now:%Y%m%d-%H%M%S}_${.project}
+#   tags: ["robomimic", "${preset_robomimic.task_tag}", "diffusion_policy"]
+#   mode: "online"
+# output_dir: runs/${wandb_cfg.run_name}
+
+# pipeline:
+#   _target_: srl_il.pipeline.imitation_learning.ImitationLearningPipeline
+
+# dataset_cfg:
+#   data:
+#     _target_: srl_il.dataset.robomimic_dataset.robomimic_train_val_test
+#     data_path: ${preset_robomimic.data.data_path}
+#     rgb_processing_keys: ${preset_robomimic.data.rgb_processing_keys}
+#     preloaded: ${preset_robomimic.data.preloaded} # preload means to keep the data in memory, but some dataset may be too large for this
+#     test_fraction: 0.1
+#     val_fraction: 0.1
+#     window_size_train: 20 
+#     window_size_test: 20
+#     keys_traj: ${preset_robomimic.data.keys_traj}
+#     keys_global: []
+#     pad_before: false
+#     pad_after: true
+#     pad_type: 'near'
+#     random_seed: ${seed}
+#   batch_size: ${batch_size}
+#   pin_memory: true
+#   num_workers: ${preset_robomimic.data.num_worker} # we don't need a seperate worker if the data is preloaded
+
+
+# algo_cfg:
+#   _target_: srl_il.algo.diffusion_policy.DiffusionPolicyTrainer
+#   algo_cfg:
+#     device: cuda
+#     target_dims: ${preset_robomimic.target_dims}
+#     T_target: 20
+#     network_is_causal: false
+#     network_group_keys: ['low_dim', 'img0', 'img1']
+#     network_cfg:
+#       d_model: 256
+#       nhead: 8
+#       num_encoder_layers: 3
+#       dim_feedforward: 1024
+#       dropout: 0.1
+#       activation: 'relu'
+#     scheduler_cfg:
+#       num_train_timesteps: 100
+#       num_inference_steps: 100
+#       beta_schedule: squaredcos_cap_v2
+#       variance_type: fixed_small
+#       clip_sample: True
+#       beta_start: 0.0001
+#       beta_end: 0.02
+#   trainer_cfg:
+#     loss_params: null # diffusion policy only use l2 loss
+#     optimizer_cfg:
+#       network:
+#         optm_cls: torch.optim.Adam
+#         lr: 0.0001
+#       obs_encoder:
+#         optm_cls: torch.optim.Adam
+#         lr: 0.0001
+#       projs:
+#         optm_cls: torch.optim.Adam
+#         lr: 0.0001
+#       embeds:
+#         optm_cls: torch.optim.Adam
+#         lr: 0.0001
+
+#   obs_encoder_cfg:
+#     output_dim: 256
+#     obs_groups_cfg:
+#       low_dim:
+#         datakeys: ['robot0_eef_pos', 'robot0_eef_quat', 'robot0_gripper_qpos']
+#         encoder_cfg:
+#           type: lowdim_concat
+#           input_dim_total: 9 # 3 + 4 + 2 
+#         posemb_cfg:
+#           type: none
+#       img0:
+#         datakeys: ['img0']
+#         encoder_cfg:
+#           type: resnet18 # crop_resnet18
+#           pretrained: true
+#         posemb_cfg:
+#           type: none
+#       img1:
+#         datakeys: ['img1']
+#         encoder_cfg:
+#           type: resnet18 # crop_resnet18
+#           pretrained: true
+#         posemb_cfg:
+#           type: none
+#     group_emb_cfg:
+#       type: none # none, whole_seq_sine, each_group_learned, whole_seq_learned
+
+#   policy_cfg: 
+#     policy_bs: 1
+#     policy_translator: 
+#       ## the following translator is used for relative action
+#       _target_: srl_il.algo.base_algo.PolicyTranslatorDirect
+#       ## the following translator is used for absolute action
+#       # _target_: srl_il.algo.base_algo.PolicyTranslator_6Drotation2Ang
+#       # action_name: actions
+#     policy_aggregator_cfg:
+#       type: "simple"
+#       update_every: 10
+
+#     policy_obs_list: # policy names and temporal length
+#       - ['robot0_eef_pos', 1]
+#       - ['robot0_eef_quat', 1]
+#       - ['robot0_gripper_qpos', 1]
+#       - ['img0', 1] 
+#       - ['img1', 1]
+# lr_scheduler_cfg:
+#   network:
+#     type: "diffusers"
+#     name: cosine
+#     params:
+#       num_warmup_steps: 200
+#       num_training_steps: 800000 # number per epoch * num_epochs
+#     step_with_metrics: false
+#   obs_encoder:
+#     type: "diffusers"
+#     name: cosine
+#     params:
+#       num_warmup_steps: 1000
+#       num_training_steps: 800000 # number per epoch * num_epochs
+#     step_with_metrics: false
+
+
+# training_cfg:
+#   num_epochs: ${preset_robomimic.train.num_epochs} 
+#   num_steps_per_epoch: 200
+#   num_eval_steps_per_epoch: 20
+#   steps_saving: 10
+#   rollout:
+#     every_n_epoch: 20
+#     enabled: true
+#     num_episodes: 10
+#     horizon: ${preset_robomimic.train.rollout_horizon}
+#     terminate_on_success: true
+#     video:
+#       video_dir: ${output_dir}/video
+#       video_skip: 5
+
+
+# normalizer_cfg:
+#   actions: # the target to reconstruct
+#     type: dataset_stats
+#     min_max: true
+#     dataname: actions
+#   robot0_eef_pos:
+#     type: dataset_stats
+#     dataname: robot0_eef_pos
+#   robot0_eef_quat:
+#     type: hardcode
+#     mean: 0.0
+#     std: 1.0
+#   robot0_gripper_qpos:
+#     type: dataset_stats
+#     dataname: robot0_gripper_qpos
+#   img0: # image net norm mean = [0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+#     type: hardcode
+#     mean: [[[0.485]], [[0.456]], [[0.406]]]
+#     std: [[[0.229]], [[0.224]], [[0.225]]]
+#   img1:
+#     type: hardcode
+#     mean: [[[0.485]], [[0.456]], [[0.406]]]
+#     std: [[[0.229]], [[0.224]], [[0.225]]]
+#   img2:
+#     type: hardcode
+#     mean: [[[0.485]], [[0.456]], [[0.406]]]
+#     std: [[[0.229]], [[0.224]], [[0.225]]]
+#   img3:
+#     type: hardcode
+#     mean: [[[0.485]], [[0.456]], [[0.406]]]
+#     std: [[[0.229]], [[0.224]], [[0.225]]]
+
+# data_augmentation_cfg: # data augmetation is only used for the data loaded from dataset, no simulation data augmentation
+#   data_augments:
+#     - outname: robot0_eef_pos
+#       type: gaussian_noise
+#       mean: 0.0
+#       std: 0.001
+#     - outname: robot0_gripper_qpos
+#       type: gaussian_noise
+#       mean: 0.0
+#       std: 0.001
+#     # - outname: actions # this is used for absolute action
+#     #   type: abs_action_rot_2_6d
+
+# sim_env_cfg:
+#   env: ${preset_robomimic.env}
+
+# projection_visualizer_cfg: {}
+ 
+# # set the directory where the output files get saved
+# hydra:
+#   output_subdir: ${output_dir}/hydra
+#   run:
+#     dir: .

@@ -166,6 +166,7 @@ class DiffusionPolicyTrainer(Diffusion, TrainerMixin, PolicyMixin):
         # concatenae and normalize the target
         target = torch.zeros((bs, self.T_target, self.targets_idx_mapping[-1]), device=self.device)
         for i, (key, dim) in enumerate(self.target_dims.items()):
+            print(f"[DEBUG] _compute_losses: key={key}, batch[key].shape={batch[key].shape}, targets_idx_mapping=({self.targets_idx_mapping[i]}, {self.targets_idx_mapping[i+1]})")
             target[:, :, self.targets_idx_mapping[i]:self.targets_idx_mapping[i+1]] = self._normalizers[key].normalize(batch[key]) 
 
         obs_cond = self.encode_obs(batch, mask_batch, self.network_group_keys) # (batch, tokens, d_model)
@@ -211,6 +212,10 @@ class DiffusionPolicyTrainer(Diffusion, TrainerMixin, PolicyMixin):
 
         # summarise the train step
         batch, mask_batch = batch # mask_batch: True means valid, False means padded
+
+        # print(f"[DEBUG] train_step: batch_data.keys()={batch.keys()}")
+        # for key in batch:
+        #     print(f"[DEBUG] train_step: key={key}, shape={batch[key].shape}, data={batch[key].flatten()[:5].tolist()}")
         bs = batch[list(self.target_dims.keys())[0]].shape[0]
         self.train_epoch_loss += loss.item() * bs
         for k,v in loss_dict.items():

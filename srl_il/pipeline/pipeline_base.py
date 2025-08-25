@@ -204,6 +204,7 @@ class NormalizationMixin(AutoInit, cfgname_and_funcs=(("normalizer_cfg", "_init_
         for i in range(len(seq_dataset)):
             data_traj, data_glob = seq_dataset[i]
             if is_traj_key:
+                print(f"[DEBUG] Normalizer: dataname={dataname}, traj_i={i}, data_traj[{dataname}]={data_traj[dataname][:5]}")
                 data = seq_dataset.load(data_traj[dataname], dataname, is_global=False)
             else:
                 data = seq_dataset.load(data_glob[dataname], dataname, is_global=True)
