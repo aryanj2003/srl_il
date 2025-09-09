@@ -17,7 +17,7 @@ mpl.rcParams.update({
 })
 
 
-CSV_PATH   = Path("/home/aryan/IL_Workspace/kept_pressure_windows_20hz.csv")  # or *_20hz.csv
+CSV_PATH   = Path("/home/aryan/IL_Workspace/srl_il/kept_pressure_windows_20hz.csv")  # or *_20hz.csv
 TRIAL_ID   = None                 # e.g., "pressure_servo_20250730_123537.db3_export"; if None, first trial is used
 XLIM       = (3.5, 14.0)           # zoom range in seconds (or set to None)
 THRESH_HPA = 600.0                # 600 hPa == 60 kPa
@@ -98,8 +98,8 @@ ax.set_xlabel("Time (s)")
 ax.set_ylabel("Pressure (hPa)")
 ax.set_title(f"Cup pressures vs time{title_suffix}")
 
-if XLIM is not None:
-    ax.set_xlim(XLIM)
+# if XLIM is not None:
+#     ax.set_xlim(XLIM)
 
 ax.legend(loc="best")
 plt.tight_layout()

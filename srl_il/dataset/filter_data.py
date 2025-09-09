@@ -44,9 +44,11 @@ def _normalize_joint_states_20hz(df_20hz: pd.DataFrame) -> pd.DataFrame:
     eff_cols = [c for c in out.columns if c.startswith("effort_")]
 
     if pos_cols:
-        X = out[pos_cols].astype(float).to_numpy()
-        X = np.arctan2(np.sin(X), np.cos(X)) / np.pi
-        out[pos_cols] = X
+        X = out[pos_cols].to_numpy(float)
+        out[[f'{c}_sin' for c in pos_cols]] = np.sin(X)
+        out[[f'{c}_cos' for c in pos_cols]] = np.cos(X)
+        # out.drop(columns=pos_cols, inplace=True)  # if you don’t want raw angles
+
 
     if vel_cols:
         V = out[vel_cols].astype(float).to_numpy()
@@ -60,6 +62,64 @@ def _normalize_joint_states_20hz(df_20hz: pd.DataFrame) -> pd.DataFrame:
 
     return out
 
+def _pre_and_engaged_from_raw(
+    df_p: pd.DataFrame,
+    threshold: float,
+    pre_rows: int,
+    rate_hz: float = 20.0,
+) -> tuple[pd.DataFrame, float | None]:
+    """
+    Pick raw rows so that, after 20 Hz nearest-bin snapping, you get
+    EXACTLY `pre_rows` distinct pre-engaged bins immediately before
+    the first engaged bin.
+
+    Returns:
+      df_out: pre + engaged rows
+      first_engaged_t: raw t_sec of first engaged (or None)
+    """
+    pressure_cols = ["data_0", "data_1", "data_2"]
+    if not set(pressure_cols).issubset(df_p.columns) or df_p.empty:
+        return df_p.iloc[0:0].copy(), None
+
+    df_p = df_p.sort_values("t_sec").reset_index(drop=True)
+    engaged_mask = df_p[pressure_cols].le(threshold).any(axis=1).to_numpy()
+    if not engaged_mask.any():
+        return df_p.iloc[0:0].copy(), None
+
+    dt = 1.0 / float(rate_hz)
+    first_idx = int(np.flatnonzero(engaged_mask)[0])
+    t_eng = float(df_p.loc[first_idx, "t_sec"])
+
+    # Walk backward and only accept a raw row if,
+    # under the *current* earliest-pre-time (future t_start),
+    # its rounded 20 Hz bin index is (a) < engaged bin and (b) new.
+    selected = []          # raw indices for pre rows (closest → farthest)
+    selected_times = []    # their times (for quick min() and bin recompute)
+
+    def ok_if_added(idx: int) -> bool:
+        times = selected_times + [float(df_p.loc[idx, "t_sec"])]
+        t_start = min(times)               # will become ROI start
+        k_eng = int(np.rint((t_eng - t_start) / dt))
+        k_list = [int(np.rint((t - t_start) / dt)) for t in times]
+        # all pre bins must be strictly before engaged, and unique
+        return all(k < k_eng for k in k_list) and (len(set(k_list)) == len(k_list))
+
+    for j in range(first_idx - 1, -1, -1):  # nearest → farthest
+        if len(selected) >= int(max(0, pre_rows)):
+            break
+        if ok_if_added(j):
+            selected.append(j)
+            selected_times.append(float(df_p.loc[j, "t_sec"]))
+
+    # Build masks
+    pre_mask = np.zeros(len(df_p), dtype=bool)
+    if selected:
+        pre_mask[selected] = True
+
+    keep_mask = pre_mask | engaged_mask
+    df_out = df_p.loc[keep_mask].copy()
+    return df_out, t_eng
+
 
 
 class FilterDataPipeline:
@@ -72,7 +132,7 @@ class FilterDataPipeline:
         engagement_threshold: float = 600.0,
         trial_id=None,
         pre_engage_padding_bins: int = PRE_ENGAGE_PADDING_BINS,
-        normalize_joints: bool = True
+        normalize_joints: bool = True,
     ):
         self.pressure_csv_path = pressure_csv_path
         self.joint_states_csv_path = joint_states_csv_path
@@ -93,6 +153,8 @@ class FilterDataPipeline:
 
         self.pre_engage_padding_bins = int(max(0, pre_engage_padding_bins))
         self.normalize_joints = bool(normalize_joints)
+        self.first_engaged_20hz_tsec = None
+
 
     # --- helper: append then sort by t_sec (and drop exact duplicate rows)
     def _append_sorted(self, out_path: str, df_new: pd.DataFrame):
@@ -208,6 +270,40 @@ class FilterDataPipeline:
         if self.normalize_joints and os.path.basename(kept_csv_path).startswith("kept_joint_states_windows"):
             out_interp = _normalize_joint_states_20hz(out_interp)
 
+
+        # --- enforce at most N pre-engaged bins in the 20 Hz outputs ---
+        # For pressure: define the 20 Hz "first engaged bin" by thresholding.
+        is_pressure_20hz = os.path.basename(kept_csv_path).startswith("kept_pressure_windows")
+        if is_pressure_20hz and {"data_0","data_1","data_2"}.issubset(out_interp.columns):
+            all_nan = out_interp[["data_0","data_1","data_2"]].isna().all(axis=1)
+            out_interp = out_interp[~all_nan].reset_index(drop=True)
+            engaged20 = out_interp[["data_0","data_1","data_2"]].le(self.engagement_threshold).any(axis=1)
+            if engaged20.any():
+                first_idx_20 = int(np.flatnonzero(engaged20)[0])
+                start_idx_20 = max(0, first_idx_20 - self.pre_engage_padding_bins)
+                # keep N pre-bins (unconditionally)
+                pre_df  = out_interp.iloc[start_idx_20:first_idx_20]
+
+                # keep only engaged from the onset forward
+                post_df = out_interp.iloc[first_idx_20:]
+                post_df = post_df[engaged20.iloc[first_idx_20:].values]
+
+                out_interp = pd.concat([pre_df, post_df], ignore_index=True)
+
+                # first engaged t in the *new* frame = first row after the N pre-bins
+                self.first_engaged_20hz_tsec = float(out_interp.iloc[len(pre_df)]["t_sec"])
+            else:
+                self.first_engaged_20hz_tsec = None
+
+        # For all other streams: align to the pressure's first engaged bin and allow only N pre bins.
+        is_other_stream_20hz = not is_pressure_20hz
+        if is_other_stream_20hz and self.first_engaged_20hz_tsec is not None and "t_sec" in out_interp.columns:
+            # find the first index whose t_sec >= pressure first-engaged time
+            idx = int(np.searchsorted(out_interp["t_sec"].to_numpy(), self.first_engaged_20hz_tsec, side="left"))
+            start_idx_20 = max(0, idx - self.pre_engage_padding_bins)
+            out_interp = out_interp.iloc[start_idx_20:].reset_index(drop=True)
+
+
         # final clean sort for append semantics
         out_interp = out_interp.sort_values(["trial_id","t_sec"]).reset_index(drop=True)
 
@@ -229,27 +325,28 @@ class FilterDataPipeline:
         return self._append_sorted(out_path, df_out)
 
     def run(self):
-        # ---- 1) PRESSURE: vectorized engagement check ----
+        # ---- 1) PRESSURE: keep N pre rows (raw) + all engaged ----
         df_p = pd.read_csv(self.pressure_csv_path)
-
         df_p["trial_id"] = self.trial_id
 
-        pressure_cols = ["data_0", "data_1", "data_2"]  # A/B/C cup pressures
-        engaged_df = df_p[pressure_cols].le(self.engagement_threshold) 
-        keep_mask = engaged_df.any(axis=1)                             
+        df_p_out, first_engaged_t_raw = _pre_and_engaged_from_raw(
+            df_p,
+            threshold=self.engagement_threshold,
+            pre_rows=self.pre_engage_padding_bins,
+            rate_hz=20.0,  # must match your downsample rate
+        )
 
-        df_p_out = df_p.loc[keep_mask].copy()
-        df_p_out["trial_id"] = self.trial_id
 
         self._append_sorted(self.out_paths["pressure"], df_p_out)
 
-        # time ROI from the kept pressure rows
+        # time ROI from the kept pressure rows (includes the pre rows we just added)
         if df_p_out.empty:
             print("No engaged pressure rows found; downstream filters will be empty.")
             self.t_start = self.t_end = None
         else:
-            self.t_start = df_p_out["t_sec"].min()
-            self.t_end   = df_p_out["t_sec"].max()
+            self.t_start = float(df_p_out["t_sec"].min())
+            self.t_end   = float(df_p_out["t_sec"].max())
+
 
         # ---- 2) Apply the auto time-ROI to the other logs ----
         self._filter_by_time(self.joint_states_csv_path, self.out_paths["joint_states"])

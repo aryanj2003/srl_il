@@ -6,3 +6,6 @@ wandb
 runs
 Data
 .vscode/settings.json
+kept_*windows*.csv
+kept_*_20hz.csv
+*.png
